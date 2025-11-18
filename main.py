@@ -73,13 +73,13 @@ def build_constraints(solver, var, var_map, ctr_file):
             vals_i = var.get(i, [])
             vals_j = var.get(j, [])
             if '>' in parts:
-                distance = int(parts[-1])
+                distance = int(parts[4])
                 for vi in vals_i:
                     for vj in vals_j:
                         if abs(vi - vj) <= distance:
                             solver.add_clause([-var_map[(i, vi)], -var_map[(j, vj)]])
             elif '=' in parts:
-                target = int(parts[-1])
+                target = int(parts[4])
                 for vi in vals_i:
                     for vj in vals_j:
                         if abs(vi - vj) == target:
@@ -122,7 +122,7 @@ def solve_and_print(solver, var_map):
         print("Cannot find solution.")
         return None
 
-def verify_solution_simple(assignment, ctr_file):
+def verify_solution_simple(assignment, var, ctr_file):
     if assignment is None:
         return False
     with open(ctr_file) as f:
@@ -132,15 +132,17 @@ def verify_solution_simple(assignment, ctr_file):
                 continue
             i, j = int(parts[0]), int(parts[1])
             if i not in assignment or j not in assignment:
-                continue
+                return False
             vi = assignment[i]
             vj = assignment[j]
+            if(vi not in var[i]) or (vj not in var[j]):
+                return False
             if '>' in parts:
-                distance = int(parts[-1])
+                distance = int(parts[4])
                 if abs(vi - vj) <= distance:
                     return False
             elif '=' in parts:
-                value = int(parts[-1])
+                value = int(parts[4])
                 if abs(vi - vj) != value:
                     return False
     return True
@@ -170,7 +172,7 @@ def main():
     assignment = solve_and_print(solver, var_map)
     if assignment is None:
         return
-    if verify_solution_simple(assignment, files["ctr"]):
+    if verify_solution_simple(assignment, var, files["ctr"]):
         print("Correct solution!")
         num_lables = len(set(assignment.values()))
         print("Number of lables used: ", num_lables)
@@ -197,7 +199,7 @@ def main():
         assignment = solve_and_print(solver, var_map)
         if assignment is None:
             break
-        if verify_solution_simple(assignment, files["ctr"]):
+        if verify_solution_simple(assignment, var, files["ctr"]):
             print("Correct solution!")
             new_num_lables = len(set(assignment.values()))
             print("Number of lables used: ", new_num_lables)
