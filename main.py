@@ -2,7 +2,6 @@ import os
 import psutil
 import sys
 from time import time
-# from pysat.solvers import Cadical195
 from pysat.solvers import Glucose4
 from pysat.pb import PBEnc
 
@@ -58,10 +57,31 @@ def create_var_map(var):
 def build_constraints(solver, var, var_map, ctr_file):
     # Exactly One
     for i, vals in var.items():
-        solver.add_clause([var_map[(i, v)] for v in vals])
+        lit = [var_map[(i, v)] for v in vals]
+        solver.add_clause(lit)
         for j in range(len(vals)):
             for k in range(j+1, len(vals)):
                 solver.add_clause([-var_map[(i, vals[j])], -var_map[(i, vals[k])]])
+
+    
+
+    # for i, vals in var.items():
+    #     lits = [var_map[(i, v)] for v in vals]
+    #     eq1 = PBEnc.equals(lits=lits, bound=1, encoding=1)
+    #     for clause in eq1.clauses:
+    #         solver.add_clause(clause)
+
+    # for i, vals in var.items():
+    #     lits = [var_map[(i, v)] for v in vals]
+
+    #     # at least 1
+    #     solver.add_clause(lits)
+
+    #     # at most 1
+    #     am1 = PBEnc.leq(lits=lits, weights=[1]*len(lits), bound=1, encoding=1)
+    #     for clause in am1.clauses:
+    #         solver.add_clause(clause)
+
 
     # Distance constraints
     with open(ctr_file) as f:
@@ -74,6 +94,29 @@ def build_constraints(solver, var, var_map, ctr_file):
             vals_j = var.get(j, [])
             if '>' in parts:
                 distance = int(parts[4])
+                # # limit range
+                # for vi in vals_i:
+                #     allowed = [ var_map[(j,v)] for v in vals_j if v < vi-distance or v > vi+distance ]
+                #     if allowed:
+                #         solver.add_clause([-var_map[(i,vi)]] + allowed)
+                #     else:
+                #         # nếu không có nhãn hợp lệ thì loại bỏ giá trị này
+                #         solver.add_clause([-var_map[(i,vi)]])
+
+                # # sequence counter
+                # for vi in vals_i:
+                #     allowed = [ var_map[(j,v)] for v in vals_j if v < vi-distance or v > vi+distance ]
+                #     if allowed:
+                #         atmost1 = PBEnc.atleast(lits = allowed, bound=1, encoding=1)
+                #         solver.add_clause([-var_map[(i,vi)]])
+                #         for clause in atmost1.clauses:
+                #             solver.add_clause(clause)
+                #     else:
+                #         # nếu không có nhãn hợp lệ thì loại bỏ giá trị này
+                #         solver.add_clause([-var_map[(i,vi)]])
+                
+
+                # pairwise
                 for vi in vals_i:
                     for vj in vals_j:
                         if abs(vi - vj) <= distance:
@@ -84,6 +127,7 @@ def build_constraints(solver, var, var_map, ctr_file):
                     for vj in vals_j:
                         if abs(vi - vj) == target:
                             solver.add_clause([-var_map[(i, vi)], var_map[(j, vj)]])
+                            solver.add_clause([-var_map[(j, vj)], var_map[(i, vi)]])
                             
 def create_label_var_map(labels, start_index):
     label_var_map = {}
@@ -93,6 +137,7 @@ def create_label_var_map(labels, start_index):
         current += 1
     return label_var_map
     
+# ánh xạ biến active -> biến xác nhận label được sử dụng    
 def build_label_constraints(solver, var_map, label_var_map):
     for (i, v), varnum in var_map.items():
         lb_varnum = label_var_map[v]
@@ -101,8 +146,7 @@ def build_label_constraints(solver, var_map, label_var_map):
 def add_limit_label_constraints(solver, label_var_map, max_labels):
     label_vars = list(label_var_map.values())
     
-    atmost_k = PBEnc.leq(lits=label_vars, weights=[1]*len(label_vars),
-                         bound=max_labels, encoding = 1) 
+    atmost_k = PBEnc.leq(lits=label_vars, bound=max_labels, encoding = 4) 
 
     for clause in atmost_k.clauses:
         solver.add_clause(clause)
@@ -176,14 +220,14 @@ def main():
         print("Correct solution!")
         num_lables = len(set(assignment.values()))
         print("Number of lables used: ", num_lables)
-    else:
+    else:   
         print("Incorrect solution!")
         return
     end_time = time()
     print(f"Time taken: {end_time - start_time:.2f} seconds")
     process = psutil.Process(os.getpid())
     print(f"Memory used: {process.memory_info().rss / 1024**2:.2f} MB")
-    lable_var_map = create_label_var_map(domain[0], len(var_map) + 1)
+    lable_var_map = create_label_var_map(domain[0], solver.nof_vars + 1)
     build_label_constraints(solver, var_map, lable_var_map)
 
     while True:
@@ -195,7 +239,7 @@ def main():
         add_limit_label_constraints(solver, lable_var_map,num_lables - 1)
         print(f"\nSolving with at most {num_lables - 1} labels...")
         build_time = time()
-        print(f"Build solver complete with {build_time - start_time:.2f} seconds")
+        print(f"Build solver complete in {build_time - start_time:.2f} seconds")
         assignment = solve_and_print(solver, var_map)
         if assignment is None:
             break
