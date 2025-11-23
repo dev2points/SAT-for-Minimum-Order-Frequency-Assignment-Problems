@@ -54,6 +54,26 @@ def create_var_map(var):
             counter += 1
     return var_map # dict mapping (i, v) to variable number
 
+def create_order_var_map(var,var_map, solver):
+    counter = solver.nof_vars() + 1
+    order_var_map = {}
+
+    for u, labels in var.items():
+        for i in labels:
+            order_var_map[(u,i)] = counter
+            counter += 1
+
+    # Monotonicity constraints
+    for u, labels in var.items():
+        for idx in range(len(labels)-1):
+            solver.add_clause([-order_var_map[(u, labels[idx])], order_var_map[(u, labels[idx+1])]])
+
+    # Linking var_map(u,i) -> order_var_map(u,i)
+    for (u,i), x in var_map.items():
+        solver.add_clause([-x, order_var_map[(u,i)]])
+
+    return order_var_map # dict mapping (u,i) to order variable number
+
 def build_constraints(solver, var, var_map, ctr_file):
     # Exactly One
     for i, vals in var.items():
@@ -62,6 +82,80 @@ def build_constraints(solver, var, var_map, ctr_file):
         for j in range(len(vals)):
             for k in range(j+1, len(vals)):
                 solver.add_clause([-var_map[(i, vals[j])], -var_map[(i, vals[k])]])
+
+    # Order encoding of distance constraints
+    order_var_map = create_order_var_map(var,var_map, solver)
+
+    with open(ctr_file) as f:
+        for line in f:
+            parts = line.strip().split()
+            if not parts:
+                continue
+
+            u, v = int(parts[0]), int(parts[1])
+            vals_u = var.get(u, [])
+            vals_v = var.get(v, [])
+            distance = int(parts[4])
+            if '=' in parts:
+                for iu in vals_u:
+                    for jv in vals_v:
+                        if abs(iu - jv) == distance:
+                            solver.add_clause([-var_map[(u, iu)],  var_map[(v, jv)]])
+                            solver.add_clause([-var_map[(v, jv)],  var_map[(u, iu)]])
+                
+
+            elif '>' in parts:
+                low_index = 0
+                high_index = 1
+                for i in vals_u:
+                    print(f"vertice {u} label {i}")
+                    low = i - distance            # min label v cannot take           
+                    high = i + distance          # high label v cannot take
+                    print(f" vertice..: {v} distance: {distance} low: {low}, high: {high}")
+                    while(low_index < len(vals_v)):
+                        if(vals_v[low_index] >= low and low_index > 0):
+                            # R(u,i) = 1 -> R(v, low) = 1
+                            solver.add_clause([-var_map[(u, i)], order_var_map[(v, vals_v[low_index - 1])]])
+                            print(f"add clause: ({u},{i}) -> ({v},{vals_v[low_index - 1]})")
+                            break
+                        low_index += 1
+
+                    if(vals_v[-1] <= high):
+                        solver.add_clause([-var_map[(u, i)], -order_var_map[(v, vals_v[-1])]])
+                        print(f"add clause: ({u},{i}) -> -({v},{vals_v[-1]})")
+                        continue
+                    while(high_index < len(vals_v)):
+                        if(vals_v[high_index] > high):
+                            # R(u,i) = 1 -> R(v, high - 1) = 0
+                            solver.add_clause([-var_map[(u, i)], -order_var_map[(v, vals_v[high_index - 1])]])
+                            print(f"add clause: ({u},{i}) -> -({v},{vals_v[high_index - 1]})")
+                            break
+                        high_index += 1
+                    
+                    
+
+                low_index = 0
+                high_index = 1
+                for i in vals_v:
+                    low = i - distance       # min label u cannot take                  
+                    high = i + distance          # high label u cannot take
+                    while(low_index < len(vals_u)):
+                        if(vals_u[low_index] >= low and low_index > 0):
+                            solver.add_clause([-var_map[(v, i)], order_var_map[(u, vals_u[low_index - 1])]])
+                            break
+                        low_index += 1
+                    if(vals_u[-1] <= high):
+                        solver.add_clause([-var_map[(v, i)], -order_var_map[(u, vals_u[-1])]])
+                        continue
+                    while(high_index < len(vals_u)):
+                        if(vals_u[high_index] > high):
+                            # R(u,i) = 1 -> R(v, high - 1) = 0
+                            solver.add_clause([-var_map[(v, i)], -order_var_map[(u, vals_u[high_index - 1])]])
+                            break
+                        high_index += 1
+
+                
+
 
     
 
@@ -83,51 +177,54 @@ def build_constraints(solver, var, var_map, ctr_file):
     #         solver.add_clause(clause)
 
 
-    # Distance constraints
-    with open(ctr_file) as f:
-        for line in f:
-            parts = line.strip().split()
-            if not parts:
-                continue
-            i, j = int(parts[0]), int(parts[1])
-            vals_i = var.get(i, [])
-            vals_j = var.get(j, [])
-            if '>' in parts:
-                distance = int(parts[4])
-                # # limit range
-                # for vi in vals_i:
-                #     allowed = [ var_map[(j,v)] for v in vals_j if v < vi-distance or v > vi+distance ]
-                #     if allowed:
-                #         solver.add_clause([-var_map[(i,vi)]] + allowed)
-                #     else:
-                #         # nếu không có nhãn hợp lệ thì loại bỏ giá trị này
-                #         solver.add_clause([-var_map[(i,vi)]])
+    # # Distance constraints
+    # with open(ctr_file) as f:
+    #     for line in f:
+    #         parts = line.strip().split()
+    #         if not parts:
+    #             continue
+    #         i, j = int(parts[0]), int(parts[1])
+    #         vals_i = var.get(i, [])
+    #         vals_j = var.get(j, [])
+    #         if '>' in parts:
+    #             distance = int(parts[4])
+    #             # limit range
+    #             for vi in vals_i:
+    #                 allowed = [ var_map[(j,v)] for v in vals_j if v < vi-distance or v > vi+distance ]
+    #                 if allowed:
+    #                     solver.add_clause([-var_map[(i,vi)]] + allowed)
+    #                 else:
+    #                     # nếu không có nhãn hợp lệ thì loại bỏ giá trị này
+    #                     solver.add_clause([-var_map[(i,vi)]])
 
-                # # sequence counter
-                # for vi in vals_i:
-                #     allowed = [ var_map[(j,v)] for v in vals_j if v < vi-distance or v > vi+distance ]
-                #     if allowed:
-                #         atmost1 = PBEnc.atleast(lits = allowed, bound=1, encoding=1)
-                #         solver.add_clause([-var_map[(i,vi)]])
-                #         for clause in atmost1.clauses:
-                #             solver.add_clause(clause)
-                #     else:
-                #         # nếu không có nhãn hợp lệ thì loại bỏ giá trị này
-                #         solver.add_clause([-var_map[(i,vi)]])
+    #             # # sequence counter
+    #             # for vi in vals_i:
+    #             #     allowed = [ var_map[(j,v)] for v in vals_j if v < vi-distance or v > vi+distance ]
+    #             #     if allowed:
+    #             #         atmost1 = PBEnc.atleast(lits = allowed, bound=1, encoding=1)
+    #             #         solver.add_clause([-var_map[(i,vi)]])
+    #             #         for clause in atmost1.clauses:
+    #             #             solver.add_clause(clause)
+    #             #     else:
+    #             #         # nếu không có nhãn hợp lệ thì loại bỏ giá trị này
+    #             #         solver.add_clause([-var_map[(i,vi)]])
                 
 
-                # pairwise
-                for vi in vals_i:
-                    for vj in vals_j:
-                        if abs(vi - vj) <= distance:
-                            solver.add_clause([-var_map[(i, vi)], -var_map[(j, vj)]])
-            elif '=' in parts:
-                target = int(parts[4])
-                for vi in vals_i:
-                    for vj in vals_j:
-                        if abs(vi - vj) == target:
-                            solver.add_clause([-var_map[(i, vi)], var_map[(j, vj)]])
-                            solver.add_clause([-var_map[(j, vj)], var_map[(i, vi)]])
+    #             # pairwise
+    #             for vi in vals_i:
+    #                 for vj in vals_j:
+    #                     if abs(vi - vj) <= distance:
+    #                         solver.add_clause([-var_map[(i, vi)], -var_map[(j, vj)]])
+            # elif '=' in parts:
+            #     target = int(parts[4])
+            #     for vi in vals_i:
+            #         for vj in vals_j:
+            #             if abs(vi - vj) == target:
+            #                 solver.add_clause([-var_map[(i, vi)], var_map[(j, vj)]])
+            #                 solver.add_clause([-var_map[(j, vj)], var_map[(i, vi)]])
+
+    
+    
                             
 def create_label_var_map(labels, start_index):
     label_var_map = {}
@@ -227,7 +324,7 @@ def main():
     print(f"Time taken: {end_time - start_time:.2f} seconds")
     process = psutil.Process(os.getpid())
     print(f"Memory used: {process.memory_info().rss / 1024**2:.2f} MB")
-    lable_var_map = create_label_var_map(domain[0], solver.nof_vars + 1)
+    lable_var_map = create_label_var_map(domain[0], solver.nof_vars() + 1)
     build_label_constraints(solver, var_map, lable_var_map)
 
     while True:
