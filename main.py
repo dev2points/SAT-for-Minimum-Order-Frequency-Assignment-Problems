@@ -63,14 +63,24 @@ def create_order_var_map(var,var_map, solver):
             order_var_map[(u,i)] = counter
             counter += 1
 
-    # Monotonicity constraints
+    # Monotonicity constraints 
     for u, labels in var.items():
+        #(1)
+        first_i = labels[0]
+        solver.add_clause([-var_map[(u, first_i)], order_var_map[(u, first_i)]])   # x -> y
+        solver.add_clause([-order_var_map[(u, first_i)], var_map[(u, first_i)]])   # y -> x
         for idx in range(len(labels)-1):
-            solver.add_clause([-order_var_map[(u, labels[idx])], order_var_map[(u, labels[idx+1])]])
+            solver.add_clause([-order_var_map[(u, labels[idx])], order_var_map[(u, labels[idx+1])]]) #(4)
+        solver.add_clause([order_var_map[(u, labels[-1])]]) #(3)
+        #(2)
+        for idx, i in enumerate(labels):
+            if idx > 0:
+                solver.add_clause([-var_map[(u, i)], order_var_map[(u, labels[idx])]])
+                solver.add_clause([-var_map[(u, i)], -order_var_map[(u, labels[idx - 1])]])  
+                solver.add_clause([-order_var_map[(u, labels[idx])], order_var_map[(u, labels[idx - 1])], var_map[(u, i)]])
+                
 
-    # Linking var_map(u,i) -> order_var_map(u,i)
-    for (u,i), x in var_map.items():
-        solver.add_clause([-x, order_var_map[(u,i)]])
+    
 
     return order_var_map # dict mapping (u,i) to order variable number
 
@@ -103,56 +113,131 @@ def build_constraints(solver, var, var_map, ctr_file):
                             solver.add_clause([-var_map[(u, iu)],  var_map[(v, jv)]])
                             solver.add_clause([-var_map[(v, jv)],  var_map[(u, iu)]])
                 
-
             elif '>' in parts:
-                low_index = 0
-                high_index = 1
-                for i in vals_u:
-                    print(f"vertice {u} label {i}")
-                    low = i - distance            # min label v cannot take           
-                    high = i + distance          # high label v cannot take
-                    print(f" vertice..: {v} distance: {distance} low: {low}, high: {high}")
-                    while(low_index < len(vals_v)):
-                        if(vals_v[low_index] >= low and low_index > 0):
-                            # R(u,i) = 1 -> R(v, low) = 1
-                            solver.add_clause([-var_map[(u, i)], order_var_map[(v, vals_v[low_index - 1])]])
-                            print(f"add clause: ({u},{i}) -> ({v},{vals_v[low_index - 1]})")
-                            break
-                        low_index += 1
+                # (5)
+                for iu in vals_u:
+                    if (iu - distance < vals_v[0] and iu + distance > vals_v[-1]):
+                        solver.add_clause([-var_map[(u, iu)]]) #(5)
+                    elif (iu - distance < vals_v[0]):
+                        for jv in vals_v:
+                            if jv - iu >= distance:
+                               solver.add_clause([-var_map[(u, iu)], order_var_map[(v, jv)]]) #(6)
+                               break
+                    elif iu + distance > vals_v[-1]:
+                        T = iu + distance - 1
+                        # tìm nhãn gần nhất <= T
+                        candidates = [t for t in vals_v if t <= T]
+                        if candidates:
+                            t_high = candidates[-1]
+                            solver.add_clause([-var_map[(u, iu)], -order_var_map[(v, t_high)]]) #(7)
+                    else : # (8)
+                        limit_low  = iu - distance - 1
+                        limit_high = iu + distance - 1
 
-                    if(vals_v[-1] <= high):
-                        solver.add_clause([-var_map[(u, i)], -order_var_map[(v, vals_v[-1])]])
-                        print(f"add clause: ({u},{i}) -> -({v},{vals_v[-1]})")
-                        continue
-                    while(high_index < len(vals_v)):
-                        if(vals_v[high_index] > high):
-                            # R(u,i) = 1 -> R(v, high - 1) = 0
-                            solver.add_clause([-var_map[(u, i)], -order_var_map[(v, vals_v[high_index - 1])]])
-                            print(f"add clause: ({u},{i}) -> -({v},{vals_v[high_index - 1]})")
-                            break
-                        high_index += 1
+                        clause = [-var_map[(u, iu)]]
+                        low_candidates = [t for t in vals_v if t <= limit_low]
+                        if low_candidates:
+                            t_low = low_candidates[-1]
+                            clause.append(order_var_map[(v, t_low)])
+                        high_candidates = [t for t in vals_v if t <= limit_high]
+                        if high_candidates:
+                            t_high = high_candidates[-1]
+                            clause.append(-order_var_map[(v, t_high)])
+                        if len(clause) > 1:
+                            solver.add_clause(clause)       
+
+                
+                
+                #     if (iu - distance < vals_v[0]):
+                #         for jv in vals_v:
+                #             if jv - iu >= distance:
+                #                solver.add_clause([-var_map[(u, iu)], order_var_map[(v, jv)]]) #(6)
+                #                break
+                #     if iu + distance > vals_v[-1]:
+                #         T = iu + distance - 1
+                #         # tìm nhãn gần nhất <= T
+                #         candidates = [t for t in vals_v if t <= T]
+                #         if candidates:
+                #             t_high = candidates[-1]
+                #             solver.add_clause([-var_map[(u, iu)], -order_var_map[(v, t_high)]]) #(7)
+                    # else : # (8)
+                    #     limit_low  = iu - distance - 1
+                    #     limit_high = iu + distance - 1
+
+                    #     clause = [-var_map[(u, iu)]]
+
+                    #         # ---- Vế trái: y_{v, j-d-1} ----
+                    #     low_candidates = [t for t in vals_v if t <= limit_low]
+                    #     if low_candidates:
+                    #         t_low = low_candidates[-1]
+                    #         clause.append(order_var_map[(v, t_low)])
+
+                    #     # ---- Vế phải: ¬y_{v, j+d-1} ----
+                    #     high_candidates = [t for t in vals_v if t <= limit_high]
+                    #     if high_candidates:
+                    #         t_high = high_candidates[-1]
+                    #         clause.append(-order_var_map[(v, t_high)])
+
+                    #     # Nếu có ít nhất 1 vế, ta mới thêm mệnh đề
+                    #     if len(clause) > 1:
+                    #         solver.add_clause(clause)        
+                    
+
+                    
+                        
+
+
+
+
+            # elif '>' in parts:
+                # low_index = 0
+                # high_index = 1
+                # for i in vals_u:
+                #     #print(f"vertice {u} label {i}")
+                #     low = i - distance            # min label v cannot take           
+                #     high = i + distance          # high label v cannot take
+                #     #print(f" vertice..: {v} distance: {distance} low: {low}, high: {high}")
+                #     while(low_index < len(vals_v)):
+                #         if(vals_v[low_index] >= low and low_index > 0):
+                #             # R(u,i) = 1 -> R(v, low) = 1
+                #             solver.add_clause([-var_map[(u, i)], order_var_map[(v, vals_v[low_index - 1])]])
+                #             #print(f"add clause: ({u},{i}) -> ({v},{vals_v[low_index - 1]})")
+                #             break
+                #         low_index += 1
+
+                #     if(vals_v[-1] <= high):
+                #         solver.add_clause([-var_map[(u, i)], -order_var_map[(v, vals_v[-1])]])
+                #         #print(f"add clause: ({u},{i}) -> -({v},{vals_v[-1]})")
+                #         continue
+                #     while(high_index < len(vals_v)):
+                #         if(vals_v[high_index] > high):
+                #             # R(u,i) = 1 -> R(v, high - 1) = 0
+                #             solver.add_clause([-var_map[(u, i)], -order_var_map[(v, vals_v[high_index - 1])]])
+                #             #print(f"add clause: ({u},{i}) -> -({v},{vals_v[high_index - 1]})")
+                #             break
+                #         high_index += 1
                     
                     
 
-                low_index = 0
-                high_index = 1
-                for i in vals_v:
-                    low = i - distance       # min label u cannot take                  
-                    high = i + distance          # high label u cannot take
-                    while(low_index < len(vals_u)):
-                        if(vals_u[low_index] >= low and low_index > 0):
-                            solver.add_clause([-var_map[(v, i)], order_var_map[(u, vals_u[low_index - 1])]])
-                            break
-                        low_index += 1
-                    if(vals_u[-1] <= high):
-                        solver.add_clause([-var_map[(v, i)], -order_var_map[(u, vals_u[-1])]])
-                        continue
-                    while(high_index < len(vals_u)):
-                        if(vals_u[high_index] > high):
-                            # R(u,i) = 1 -> R(v, high - 1) = 0
-                            solver.add_clause([-var_map[(v, i)], -order_var_map[(u, vals_u[high_index - 1])]])
-                            break
-                        high_index += 1
+                # low_index = 0
+                # high_index = 1
+                # for i in vals_v:
+                #     low = i - distance       # min label u cannot take                  
+                #     high = i + distance          # high label u cannot take
+                #     while(low_index < len(vals_u)):
+                #         if(vals_u[low_index] >= low and low_index > 0):
+                #             solver.add_clause([-var_map[(v, i)], order_var_map[(u, vals_u[low_index - 1])]])
+                #             break
+                #         low_index += 1
+                #     if(vals_u[-1] <= high):
+                #         solver.add_clause([-var_map[(v, i)], -order_var_map[(u, vals_u[-1])]])
+                #         continue
+                #     while(high_index < len(vals_u)):
+                #         if(vals_u[high_index] > high):
+                #             # R(u,i) = 1 -> R(v, high - 1) = 0
+                #             solver.add_clause([-var_map[(v, i)], -order_var_map[(u, vals_u[high_index - 1])]])
+                #             break
+                #         high_index += 1
 
                 
 
