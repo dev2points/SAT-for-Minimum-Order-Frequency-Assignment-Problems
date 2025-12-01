@@ -192,13 +192,27 @@ def build_label_constraints(solver, var_map, label_var_map):
         lb_varnum = label_var_map[v]
         solver.add_clause([-varnum, lb_varnum])
 
-def add_limit_label_constraints(solver, label_var_map, max_labels):
-    label_vars = list(label_var_map.values())
-    
-    atmost_k = pb2.leq(lits=label_vars, bound=max_labels, encoding = 4) 
+def add_limit_label_constraints(solver, label_var_map, UB):
+    first_free_var = solver.nof_vars() 
+    x_vars = []
+    for i in range(UB):
+        first_free_var += 1
+        x_vars.append(first_free_var)
 
-    for clause in atmost_k.clauses:
+    for i in range(UB - 1):
+        solver.add_clause([-x_vars[i], x_vars[i + 1]])
+
+    label_vars = list(label_var_map.values())
+    label_vars.extend(x_vars)
+
+    config = pblib.PBConfig()
+    pb2 = pblib.Pb2cnf(config)
+    formular = []
+    atmost_k = pb2.encode_leq([1]*len(label_vars), label_vars, UB, formular,solver.nof_vars() +1)
+
+    for clause in formular:
         solver.add_clause(clause)
+    return x_vars
 
 
 def solve_and_print(solver, var_map):
@@ -258,7 +272,8 @@ def main():
     var = read_var(files["var"], domain)
     var_map = create_var_map(var)
 
-    solver = Glucose4()
+    print("Solve first problem:")
+    solver = Solver(name='glucose4')
     # solver = Cadical195()
     build_constraints(solver, var, var_map, files["ctr"])
 
@@ -278,19 +293,21 @@ def main():
     print(f"Memory used: {process.memory_info().rss / 1024**2:.2f} MB")
     lable_var_map = create_label_var_map(domain[0], solver.nof_vars() + 1)
     build_label_constraints(solver, var_map, lable_var_map)
+    x_vars = add_limit_label_constraints(solver, lable_var_map,num_lables)
 
-    while True:
+    
+
+    while num_lables > 1:
         start_time = time()
-        solver.delete()
-        solver = Glucose4()
-        build_constraints(solver, var, var_map, files["ctr"])
-        build_label_constraints(solver, var_map, lable_var_map)
-        add_limit_label_constraints(solver, lable_var_map,num_lables - 1)
-        print(f"\nSolving with at most {num_lables - 1} labels...")
+        
+        print("--------------------------------------------------")
+        print(f"\nTrying with at most {num_lables - 1} labels...")
         build_time = time()
-        print(f"Build solver complete in {build_time - start_time:.2f} seconds")
+        solver.add_clause([x_vars[num_lables - 1]])
         assignment = solve_and_print(solver, var_map)
         if assignment is None:
+            print("No more solutions found.")
+            print("Optimal number of labels used: ", num_lables)
             break
         if verify_solution_simple(assignment, var, files["ctr"]):
             print("Correct solution!")
