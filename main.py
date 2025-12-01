@@ -2,8 +2,8 @@ import os
 import psutil
 import sys
 from time import time
-from pysat.solvers import Glucose4
-from pysat.pb import PBEnc
+from pysat.solvers import Solver
+from pypblib import pblib
 
 def get_file_names(dataset_folder):
     base = os.path.basename(dataset_folder)
@@ -66,18 +66,17 @@ def create_order_var_map(var,var_map, solver):
     # Monotonicity constraints 
     for u, labels in var.items():
         #(1)
-        first_i = labels[0]
-        solver.add_clause([-var_map[(u, first_i)], order_var_map[(u, first_i)]])   # x -> y
-        solver.add_clause([-order_var_map[(u, first_i)], var_map[(u, first_i)]])   # y -> x
-        for idx in range(len(labels)-1):
-            solver.add_clause([-order_var_map[(u, labels[idx])], order_var_map[(u, labels[idx+1])]]) #(4)
-        solver.add_clause([order_var_map[(u, labels[-1])]]) #(3)
+        last_i = labels[-1]
+        solver.add_clause([-var_map[(u, last_i)], order_var_map[(u, last_i)]])   # x -> y
+        solver.add_clause([-order_var_map[(u, last_i)], var_map[(u, last_i)]])   # y -> x
+        for idx in range(1, len(labels)):
+            solver.add_clause([-order_var_map[(u, labels[idx])], order_var_map[(u, labels[idx - 1])]]) #(4)
+        solver.add_clause([order_var_map[(u, labels[0])]]) #(3)
         #(2)
-        for idx, i in enumerate(labels):
-            if idx > 0:
-                solver.add_clause([-var_map[(u, i)], order_var_map[(u, labels[idx])]])
-                solver.add_clause([-var_map[(u, i)], -order_var_map[(u, labels[idx - 1])]])  
-                solver.add_clause([-order_var_map[(u, labels[idx])], order_var_map[(u, labels[idx - 1])], var_map[(u, i)]])
+        for idx in range(len(labels)-1):
+            solver.add_clause([-var_map[(u, labels[idx])], order_var_map[(u, labels[idx])]])
+            solver.add_clause([-var_map[(u, labels[idx])], -order_var_map[(u, labels[idx + 1])]])  
+            solver.add_clause([-order_var_map[(u, labels[idx])], order_var_map[(u, labels[idx + 1])], var_map[(u, labels[idx])]])
                 
 
     
@@ -116,197 +115,65 @@ def build_constraints(solver, var, var_map, ctr_file):
             elif '>' in parts:
                 # (5)
                 for iu in vals_u:
-                    if (iu - distance < vals_v[0] and iu + distance > vals_v[-1]):
+                    if (iu - distance  <= vals_v[0] and iu + distance > vals_v[-1]):
                         solver.add_clause([-var_map[(u, iu)]]) #(5)
-                    elif (iu - distance < vals_v[0]):
+                    elif (iu - distance <= vals_v[0]):
                         for jv in vals_v:
-                            if jv - iu >= distance:
+                            if jv - iu > distance:
                                solver.add_clause([-var_map[(u, iu)], order_var_map[(v, jv)]]) #(6)
                                break
                     elif iu + distance > vals_v[-1]:
-                        T = iu + distance - 1
-                        # tìm nhãn gần nhất <= T
-                        candidates = [t for t in vals_v if t <= T]
-                        if candidates:
-                            t_high = candidates[-1]
-                            solver.add_clause([-var_map[(u, iu)], -order_var_map[(v, t_high)]]) #(7)
+                        T = iu - distance 
+                        # tìm nhãn gần nhất >= T
+                        for t in vals_v:
+                            if t >= T:
+                                solver.add_clause([-var_map[(u, iu)], -order_var_map[(v, t)]]) #(7)
+                                break
                     else : # (8)
-                        limit_low  = iu - distance - 1
-                        limit_high = iu + distance - 1
+                        limit_low  = iu - distance 
+                        limit_high = iu + distance 
 
                         clause = [-var_map[(u, iu)]]
-                        low_candidates = [t for t in vals_v if t <= limit_low]
-                        if low_candidates:
-                            t_low = low_candidates[-1]
-                            clause.append(order_var_map[(v, t_low)])
-                        high_candidates = [t for t in vals_v if t <= limit_high]
-                        if high_candidates:
-                            t_high = high_candidates[-1]
-                            clause.append(-order_var_map[(v, t_high)])
+                        for t in vals_v:
+                            if t >= limit_low:
+                                clause.append(-order_var_map[(v, t)])
+                                break
+                        for t in vals_v:
+                            if t >= limit_high:
+                                clause.append(order_var_map[(v, t)])
+                                break
                         if len(clause) > 1:
-                            solver.add_clause(clause)       
+                            solver.add_clause(clause)   
 
-                
-                
-                #     if (iu - distance < vals_v[0]):
-                #         for jv in vals_v:
-                #             if jv - iu >= distance:
-                #                solver.add_clause([-var_map[(u, iu)], order_var_map[(v, jv)]]) #(6)
-                #                break
-                #     if iu + distance > vals_v[-1]:
-                #         T = iu + distance - 1
-                #         # tìm nhãn gần nhất <= T
-                #         candidates = [t for t in vals_v if t <= T]
-                #         if candidates:
-                #             t_high = candidates[-1]
-                #             solver.add_clause([-var_map[(u, iu)], -order_var_map[(v, t_high)]]) #(7)
-                    # else : # (8)
-                    #     limit_low  = iu - distance - 1
-                    #     limit_high = iu + distance - 1
-
-                    #     clause = [-var_map[(u, iu)]]
-
-                    #         # ---- Vế trái: y_{v, j-d-1} ----
-                    #     low_candidates = [t for t in vals_v if t <= limit_low]
-                    #     if low_candidates:
-                    #         t_low = low_candidates[-1]
-                    #         clause.append(order_var_map[(v, t_low)])
-
-                    #     # ---- Vế phải: ¬y_{v, j+d-1} ----
-                    #     high_candidates = [t for t in vals_v if t <= limit_high]
-                    #     if high_candidates:
-                    #         t_high = high_candidates[-1]
-                    #         clause.append(-order_var_map[(v, t_high)])
-
-                    #     # Nếu có ít nhất 1 vế, ta mới thêm mệnh đề
-                    #     if len(clause) > 1:
-                    #         solver.add_clause(clause)        
-                    
-
-                    
-                        
-
-
-
-
-            # elif '>' in parts:
-                # low_index = 0
-                # high_index = 1
-                # for i in vals_u:
-                #     #print(f"vertice {u} label {i}")
-                #     low = i - distance            # min label v cannot take           
-                #     high = i + distance          # high label v cannot take
-                #     #print(f" vertice..: {v} distance: {distance} low: {low}, high: {high}")
-                #     while(low_index < len(vals_v)):
-                #         if(vals_v[low_index] >= low and low_index > 0):
-                #             # R(u,i) = 1 -> R(v, low) = 1
-                #             solver.add_clause([-var_map[(u, i)], order_var_map[(v, vals_v[low_index - 1])]])
-                #             #print(f"add clause: ({u},{i}) -> ({v},{vals_v[low_index - 1]})")
-                #             break
-                #         low_index += 1
-
-                #     if(vals_v[-1] <= high):
-                #         solver.add_clause([-var_map[(u, i)], -order_var_map[(v, vals_v[-1])]])
-                #         #print(f"add clause: ({u},{i}) -> -({v},{vals_v[-1]})")
-                #         continue
-                #     while(high_index < len(vals_v)):
-                #         if(vals_v[high_index] > high):
-                #             # R(u,i) = 1 -> R(v, high - 1) = 0
-                #             solver.add_clause([-var_map[(u, i)], -order_var_map[(v, vals_v[high_index - 1])]])
-                #             #print(f"add clause: ({u},{i}) -> -({v},{vals_v[high_index - 1]})")
-                #             break
-                #         high_index += 1
-                    
-                    
-
-                # low_index = 0
-                # high_index = 1
-                # for i in vals_v:
-                #     low = i - distance       # min label u cannot take                  
-                #     high = i + distance          # high label u cannot take
-                #     while(low_index < len(vals_u)):
-                #         if(vals_u[low_index] >= low and low_index > 0):
-                #             solver.add_clause([-var_map[(v, i)], order_var_map[(u, vals_u[low_index - 1])]])
-                #             break
-                #         low_index += 1
-                #     if(vals_u[-1] <= high):
-                #         solver.add_clause([-var_map[(v, i)], -order_var_map[(u, vals_u[-1])]])
-                #         continue
-                #     while(high_index < len(vals_u)):
-                #         if(vals_u[high_index] > high):
-                #             # R(u,i) = 1 -> R(v, high - 1) = 0
-                #             solver.add_clause([-var_map[(v, i)], -order_var_map[(u, vals_u[high_index - 1])]])
-                #             break
-                #         high_index += 1
-
-                
-
-
-    
-
-    # for i, vals in var.items():
-    #     lits = [var_map[(i, v)] for v in vals]
-    #     eq1 = PBEnc.equals(lits=lits, bound=1, encoding=1)
-    #     for clause in eq1.clauses:
-    #         solver.add_clause(clause)
-
-    # for i, vals in var.items():
-    #     lits = [var_map[(i, v)] for v in vals]
-
-    #     # at least 1
-    #     solver.add_clause(lits)
-
-    #     # at most 1
-    #     am1 = PBEnc.leq(lits=lits, weights=[1]*len(lits), bound=1, encoding=1)
-    #     for clause in am1.clauses:
-    #         solver.add_clause(clause)
-
-
-    # # Distance constraints
-    # with open(ctr_file) as f:
-    #     for line in f:
-    #         parts = line.strip().split()
-    #         if not parts:
-    #             continue
-    #         i, j = int(parts[0]), int(parts[1])
-    #         vals_i = var.get(i, [])
-    #         vals_j = var.get(j, [])
-    #         if '>' in parts:
-    #             distance = int(parts[4])
-    #             # limit range
-    #             for vi in vals_i:
-    #                 allowed = [ var_map[(j,v)] for v in vals_j if v < vi-distance or v > vi+distance ]
-    #                 if allowed:
-    #                     solver.add_clause([-var_map[(i,vi)]] + allowed)
-    #                 else:
-    #                     # nếu không có nhãn hợp lệ thì loại bỏ giá trị này
-    #                     solver.add_clause([-var_map[(i,vi)]])
-
-    #             # # sequence counter
-    #             # for vi in vals_i:
-    #             #     allowed = [ var_map[(j,v)] for v in vals_j if v < vi-distance or v > vi+distance ]
-    #             #     if allowed:
-    #             #         atmost1 = PBEnc.atleast(lits = allowed, bound=1, encoding=1)
-    #             #         solver.add_clause([-var_map[(i,vi)]])
-    #             #         for clause in atmost1.clauses:
-    #             #             solver.add_clause(clause)
-    #             #     else:
-    #             #         # nếu không có nhãn hợp lệ thì loại bỏ giá trị này
-    #             #         solver.add_clause([-var_map[(i,vi)]])
-                
-
-    #             # pairwise
-    #             for vi in vals_i:
-    #                 for vj in vals_j:
-    #                     if abs(vi - vj) <= distance:
-    #                         solver.add_clause([-var_map[(i, vi)], -var_map[(j, vj)]])
-            # elif '=' in parts:
-            #     target = int(parts[4])
-            #     for vi in vals_i:
-            #         for vj in vals_j:
-            #             if abs(vi - vj) == target:
-            #                 solver.add_clause([-var_map[(i, vi)], var_map[(j, vj)]])
-            #                 solver.add_clause([-var_map[(j, vj)], var_map[(i, vi)]])
+                for jv in vals_v:
+                    if (jv - distance  <= vals_u[0] and jv + distance > vals_u[-1]):
+                        solver.add_clause([-var_map[(v, jv)]]) #(5)
+                    elif (jv - distance <= vals_u[0]):
+                        for iu in vals_u:
+                            if jv - iu > distance:
+                               solver.add_clause([-var_map[(v, jv)], order_var_map[(u, iu)]]) #(6)
+                               break
+                    elif jv + distance > vals_u[-1]:
+                        T = jv - distance 
+                        # tìm nhãn gần nhất >= T
+                        for t in vals_u:
+                            if t >= T:
+                                solver.add_clause([-var_map[(v, jv)], -order_var_map[(u, t)]]) #(7)
+                                break
+                    else : # (8)
+                        limit_low  = jv - distance 
+                        limit_high = jv + distance 
+                        clause = [-var_map[(v, jv)]]
+                        for t in vals_u:
+                            if t >= limit_low:
+                                clause.append(-order_var_map[(u, t)])
+                                break
+                        for t in vals_u:
+                            if t >= limit_high:
+                                clause.append(order_var_map[(u, t)])
+                                break
+                        if len(clause) > 1:
+                            solver.add_clause(clause)  
 
     
     
@@ -328,7 +195,7 @@ def build_label_constraints(solver, var_map, label_var_map):
 def add_limit_label_constraints(solver, label_var_map, max_labels):
     label_vars = list(label_var_map.values())
     
-    atmost_k = PBEnc.leq(lits=label_vars, bound=max_labels, encoding = 4) 
+    atmost_k = pb2.leq(lits=label_vars, bound=max_labels, encoding = 4) 
 
     for clause in atmost_k.clauses:
         solver.add_clause(clause)
